@@ -6484,7 +6484,8 @@ async def send_zero_stat_warnings(
                     await notify_log_channel(uncertain_text[:2000])
 
             await _send_uncertain_group(division_uncertain, use_division_supervisor=True)
-            await _send_uncertain_group(prospect_uncertain, use_division_supervisor=False)
+            # Prospect — без тега, supervisor не нужен
+            # await _send_uncertain_group(prospect_uncertain, use_division_supervisor=False)
         log.info(
             "Матч #%s: выдано автоварнов %s, поставлено в очередь %s, кандидатов %s",
             result.get("match_id"),
