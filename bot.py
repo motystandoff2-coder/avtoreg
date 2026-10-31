@@ -6382,18 +6382,6 @@ async def send_zero_stat_warnings(
 
             queue_caption = evidence_text
 
-            # Division warns ping a separate moderator in the evidence message
-            if league_type == "Division League":
-                division_tag = await resolve_warning_supervisor_tag(
-                    source_message,
-                    warning_context_channel,
-                    admin_command_channel,
-                    query_override=WARN_DIVISION_SUPERVISOR_QUERY,
-                    user_id_override=WARN_DIVISION_SUPERVISOR_ID,
-                )
-                if division_tag:
-                    queue_caption += f"\n{division_tag}"
-
             try:
                 await send_warning_with_screenshot(
                     warning_channel,
