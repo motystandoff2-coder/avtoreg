@@ -3511,14 +3511,7 @@ def result_from_card_and_visual_audit(
                     visual_players[visual_index].get("nickname", ""),
                 ),
             )
-            # Присваиваем игроку его визуальную строку, чтобы сохранить реальные K/A/D
-            resolved_order[card_index] = visual_index
-            # Если на табло 5 или меньше игроков, оно полностью видно (нет скролла).
-            # Значит, мы уверены, что это именно его неправильный ник.
-            if len(visual_players) <= 5:
-                forced_wrong_nickname_indices.add(card_index)
-            else:
-                wrong_nickname_card_indices.add(card_index)
+            wrong_nickname_card_indices.add(card_index)
             available_cards.remove(card_index)
 
         merged: list[dict] = []
@@ -3534,7 +3527,11 @@ def result_from_card_and_visual_audit(
                         "kills": 0,
                         "assists": 0,
                         "deaths": 13,
-                        "warning_reason": "нет на скриншоте",  # неправильный ник теперь имеет visual_index
+                        "warning_reason": (
+                            "неправильный ник"
+                            if card_index in wrong_nickname_card_indices
+                            else "нет на скриншоте"
+                        ),
                     }
                 )
                 continue
@@ -3551,8 +3548,6 @@ def result_from_card_and_visual_audit(
             elif card_index in forced_wrong_nickname_indices:
                 warning_reason = "неправильный ник"
                 warning_certainty = "full_scoreboard_wrong_nickname"
-            elif card_index in wrong_nickname_card_indices:
-                warning_reason = "неправильный ник"
             merged_player = {
                 # The card itself is authoritative for registration IDs.
                 "id": int(card_player["id"]),
@@ -6074,26 +6069,6 @@ async def send_warning_with_screenshot(
     await channel.send(fallback[:2000])
 
 
-async def send_manual_last_warn_notice(
-    channel,
-    supervisor_tag: str,
-    match_id: int,
-    player_tag: str,
-    reason_text: str,
-) -> None:
-    """Notify the main warn channel that a 2/3 player has the last warn before ban."""
-    sent = await channel.send(
-        (
-            f"⚠️ {supervisor_tag} последний варн перед баном!\n"
-            f"Матч #{match_id}\n"
-            f"Игрок: {player_tag} (роль 2/3)\n"
-            f"Причина: {reason_text}\n"
-            f"/warn будет выдан автоматически — это уведомление."
-        )[:2000]
-    )
-    with contextlib.suppress(Exception):
-        await sent.add_reaction("✅")
-
 
 _background_tasks: set[asyncio.Task] = set()
 
@@ -6404,32 +6379,6 @@ async def send_zero_stat_warnings(
                     user_id,
                 )
                 continue
-
-            # Игрок с ролью 2/3 — последний варн перед баном.
-            # Варн всё равно выдаётся через час как обычно, но дополнительно
-            # тегаем основного supervisor (versus2739) в канале варнов основного сервера.
-            if member_has_23_warn_role(member):
-                supervisor_tag = await resolve_warning_supervisor_tag(
-                    source_message,
-                    warning_channel,
-                    admin_command_channel,
-                ) or default_supervisor_tag
-                manual_channel = warning_channel or notification_channel or admin_command_channel
-                log.info(
-                    "Матч #%s: игрок <@%s> имеет роль 2/3 — тегаем supervisor %s, варн ставится в очередь",
-                    result.get("match_id"),
-                    user_id,
-                    supervisor_tag,
-                )
-                if supervisor_tag and manual_channel is not None:
-                    with contextlib.suppress(Exception):
-                        await send_manual_last_warn_notice(
-                            manual_channel,
-                            supervisor_tag,
-                            int(result["match_id"]),
-                            target,
-                            reason_text,
-                        )
 
             queue_caption = evidence_text
 
@@ -8119,11 +8068,6 @@ async def retry_pending_warns() -> int:
             continue
 
         text = str(getattr(msg, "content", "") or "")
-        # Пропускаем уведомления про 2/3 (они уже с ✅ реакцией, но на всякий случай)
-        if "последний варн перед баном" in text:
-            with contextlib.suppress(Exception):
-                await msg.add_reaction("✅")
-            continue
         # Parse: first line = @mention or @#ID | nick
         # Second line = reason - #match_id
         lines = text.strip().split("\n")
@@ -8165,28 +8109,6 @@ async def retry_pending_warns() -> int:
         if league_type is None:
             log.info("retry_pending_warns: матч #%s — не определена лига для %s", match_id, user_id)
             continue
-
-        # Игрок с ролью 2/3 — последний варн перед баном.
-        # Варн всё равно выдаётся, но дополнительно тегаем supervisor.
-        if member_has_23_warn_role(member):
-            supervisor_tag = await resolve_warning_supervisor_tag(
-                msg,
-                warn_channel,
-                admin_channel,
-            )
-            log.info(
-                "retry_pending_warns: матч #%s — игрок <@%s> роль 2/3, тегаем supervisor %s и выдаём /warn",
-                match_id, user_id, supervisor_tag,
-            )
-            if supervisor_tag and warn_channel is not None:
-                with contextlib.suppress(Exception):
-                    await send_manual_last_warn_notice(
-                        warn_channel,
-                        supervisor_tag,
-                        match_id,
-                        f"<@{user_id}>",
-                        reason_text,
-                    )
 
         # Issue /warn
         try:
