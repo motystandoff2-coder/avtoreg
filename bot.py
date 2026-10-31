@@ -6285,7 +6285,7 @@ async def send_zero_stat_warnings(
         )
         sent_warnings = 0
         queued_warnings = 0
-        uncertain_players: list[tuple[str, dict, Optional[int]]] = []
+        uncertain_players: list[tuple[str, dict, Optional[int], Optional[str]]] = []
 
         for team_key, player_index, player in warning_players:
             # ── Resolve Discord identity for every candidate ──
@@ -6312,7 +6312,7 @@ async def send_zero_stat_warnings(
             # ── Certainty gate ──
             is_certain, certainty_reason = player_auto_warn_is_certain(player)
             if not is_certain:
-                uncertain_players.append((certainty_reason, player, user_id))
+                uncertain_players.append((certainty_reason, player, user_id, None))
                 log.info(
                     "Матч #%s: игрок #%s `%s` — НЕ уверен: %s",
                     match_id_str,
@@ -6323,7 +6323,7 @@ async def send_zero_stat_warnings(
                 continue
 
             if user_id is None or member is None:
-                uncertain_players.append(("Discord-профиль не найден", player, user_id))
+                uncertain_players.append(("Discord-профиль не найден", player, user_id, None))
                 log.info(
                     "Матч #%s: игрок #%s `%s` — Discord-профиль не найден",
                     match_id_str,
@@ -6444,46 +6444,47 @@ async def send_zero_stat_warnings(
                 await notify_log_channel(log_text)
 
         # ── Uncertain players → notify supervisor via AUTOREG_WARNS_CHANNEL or LOG_CHANNEL ──
-        uncertain_has_division = any(
-            "division" in str(reason).lower() or "division" in str(player.get("warning_reason", "")).lower()
-            for reason, player, _uid in uncertain_players
-        )
-        uncertain_supervisor_tag = await resolve_warning_supervisor_tag(
-            source_message,
-            warning_context_channel,
-            admin_command_channel,
-            query_override=(WARN_DIVISION_SUPERVISOR_QUERY if uncertain_has_division else None),
-            user_id_override=(WARN_DIVISION_SUPERVISOR_ID if uncertain_has_division else None),
-        ) or default_supervisor_tag
-        if uncertain_players and uncertain_supervisor_tag:
-            uncertain_lines = [
-                f"🔍 **Матч #{result['match_id']}** — бот не уверен, варн НЕ выдан:",
-            ]
-            for reason, player, uid in uncertain_players:
-                identity_names = player_identity_names(player)
-                player_label = (
-                    f"<@{uid}>" if uid is not None
-                    else f"`{identity_names[0] if identity_names else '#' + str(player.get('id'))}`"
+        # Только тегаем если есть что сказать и только нужного supervisor
+        if uncertain_players:
+            # Группируем uncertain по лиге, чтобы тегать нужного supervisor
+            division_uncertain = [(r, p, u, lt) for r, p, u, lt in uncertain_players if lt == "Division League"]
+            prospect_uncertain = [(r, p, u, lt) for r, p, u, lt in uncertain_players if lt != "Division League"]
+
+            async def _send_uncertain_group(group, use_division_supervisor: bool) -> None:
+                if not group:
+                    return
+                sup_tag = await resolve_warning_supervisor_tag(
+                    source_message,
+                    warning_context_channel,
+                    admin_command_channel,
+                    query_override=(WARN_DIVISION_SUPERVISOR_QUERY if use_division_supervisor else None),
+                    user_id_override=(WARN_DIVISION_SUPERVISOR_ID if use_division_supervisor else None),
                 )
-                warn_reason = WARNING_REASON_LABELS.get(
-                    str(player.get("warning_reason") or ""),
-                    str(player.get("warning_reason") or "неизвестно"),
-                )
-                uncertain_lines.append(f"• {player_label} — {warn_reason} ({reason})")
-            uncertain_text = f"{uncertain_supervisor_tag}\n" + "\n".join(uncertain_lines)
-            
-            # Неуверенные варны → notification_channel (НЕ warning_channel,
-            # чтобы retry_pending_warns не пытался парсить их как очередь варнов)
-            _uncertain_channel = notification_channel
-            try:
-                await _uncertain_channel.send(uncertain_text[:2000])
-                log.info(
-                    "Матч #%s: неуверенные варны переданы supervisor в канал варнов",
-                    result.get("match_id"),
-                )
-            except Exception:
-                log.exception("Не удалось отправить uncertain-варны в канал варнов")
-                await notify_log_channel(uncertain_text[:2000])
+                if not sup_tag:
+                    return
+                lines = [f"🔍 **Матч #{result['match_id']}** — бот не уверен, варн НЕ выдан:"]
+                for reason, player, uid, _ in group:
+                    identity_names = player_identity_names(player)
+                    player_label = (
+                        f"<@{uid}>" if uid is not None
+                        else f"`{identity_names[0] if identity_names else '#' + str(player.get('id'))}`"
+                    )
+                    warn_reason = WARNING_REASON_LABELS.get(
+                        str(player.get("warning_reason") or ""),
+                        str(player.get("warning_reason") or "неизвестно"),
+                    )
+                    lines.append(f"• {player_label} — {warn_reason} ({reason})")
+                uncertain_text = f"{sup_tag}\n" + "\n".join(lines)
+                try:
+                    await notification_channel.send(uncertain_text[:2000])
+                    log.info("Матч #%s: неуверенные варны (%s) отправлены supervisor",
+                             result.get("match_id"), "division" if use_division_supervisor else "prospect")
+                except Exception:
+                    log.exception("Не удалось отправить uncertain-варны в канал варнов")
+                    await notify_log_channel(uncertain_text[:2000])
+
+            await _send_uncertain_group(division_uncertain, use_division_supervisor=True)
+            await _send_uncertain_group(prospect_uncertain, use_division_supervisor=False)
         log.info(
             "Матч #%s: выдано автоварнов %s, поставлено в очередь %s, кандидатов %s",
             result.get("match_id"),
