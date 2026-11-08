@@ -3543,8 +3543,6 @@ def result_from_card_and_visual_audit(
             warning_certainty: Optional[str] = None
             if kills == 0 and assists == 0 and deaths == 0:
                 deaths = 13
-                warning_reason = "додж статистики"
-                warning_certainty = "exact_zero_row"
             elif card_index in forced_wrong_nickname_indices:
                 warning_reason = "неправильный ник"
                 warning_certainty = "full_scoreboard_wrong_nickname"
@@ -3721,8 +3719,6 @@ def result_from_review_card_and_modal(
                     kills, assists, deaths = card_stats
                 else:
                     kills, assists, deaths = (0, 0, 13)
-                    warning_reason = "додж статистики"
-                    warning_certainty = "exact_zero_row"
             p_data = {"id": int(pid), "nickname": player.get("nickname", ""), "kills": kills, "assists": assists, "deaths": deaths, "confidence": 1.0}
             if warning_reason:
                 p_data["warning_reason"] = warning_reason
@@ -3851,8 +3847,6 @@ def parse_complete_card(message_text: str) -> Optional[dict]:
             }
             if kills == 0 and assists == 0 and deaths == 0:
                 p_data["deaths"] = 13
-                p_data["warning_reason"] = "додж статистики"
-                p_data["warning_certainty"] = "exact_zero_row"
             team.append(p_data)
             if len(team) == 5:
                 break
@@ -4513,8 +4507,6 @@ Build a registration result:
                 and int(player.get("deaths", 0) or 0) == 0
             ):
                 player["deaths"] = 13
-                player["warning_reason"] = "додж статистики"
-                player["warning_certainty"] = "exact_zero_row"
     explicit_ct_team = explicit_ct_team_from_card(message_text)
     if explicit_ct_team in ("A", "B"):
         result["ct_team"] = explicit_ct_team
@@ -4632,7 +4624,6 @@ Build a registration result:
 WARNING_REASON_LABELS = {
     "нет на скриншоте": "Отсутствие на финальном скриншоте",
     "неправильный ник": "Несоответствие игрового никнейма.",
-    "додж статистики": "Обнуление игровой статистики",
 }
 
 
@@ -5041,9 +5032,10 @@ def mark_zero_stat_warning_reasons(result: dict) -> int:
 
         if player.get("warning_reason"):
             continue
-        if (kills, assists, deaths) == (0, 0, 13):
-            player["warning_reason"] = "додж статистики"
-            marked += 1
+        # Обнуление статистики убрано из игры — варн за додж больше не выдаётся
+        # if (kills, assists, deaths) == (0, 0, 13):
+        #     player["warning_reason"] = "додж статистики"
+        #     marked += 1
     return marked
 
 
@@ -5688,12 +5680,6 @@ def player_auto_warn_is_certain(player: dict) -> tuple[bool, str]:
         # Missing from a full 5-row scoreboard is a 100% violation.
         return True, ""
 
-    if reason == "додж статистики":
-        # Either we saw a 0/0/0 row, or it came back empty.
-        if certainty == "exact_zero_row" and stats == (0, 0, 13):
-            return True, ""
-        return False, "0/0/13 не подтверждены точной строкой табло"
-
     if reason == "неправильный ник":
         if certainty != "full_scoreboard_wrong_nickname":
             return False, "несоответствие ника не доказано полным табло"
@@ -6189,7 +6175,6 @@ async def send_zero_stat_warnings(
             if player.get("warning_reason") in {
                 "неправильный ник",
                 "нет на скриншоте",
-                "додж статистики",
             }:
                 warning_players.append((team_key, player_index, player))
     log.info(
